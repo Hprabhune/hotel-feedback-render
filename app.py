@@ -11,10 +11,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+
+
+
+
 # Create necessary folders if they don't exist
 for folder in ['qr_codes', 'database']:
     if not os.path.exists(folder):
         os.makedirs(folder)
+
 
 app = Flask(__name__)
 
@@ -46,6 +51,10 @@ EMAIL_CONFIG = {
     'enable_emails': True  # Set to True after configuring email
 }
 
+# DISABLE emails on Render to prevent timeouts
+if os.environ.get('RENDER'):
+    EMAIL_CONFIG['enable_emails'] = False
+    print("⚠️ Running on Render - Email alerts DISABLED to prevent timeouts")
 # ------------------- CREATE FOLDERS -------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 QR_FOLDER = os.path.join(BASE_DIR, "qr_codes")
@@ -115,15 +124,16 @@ def check_alert_thresholds(feedback_data):
 
 def test_email_config():
     """Test email configuration"""
+    # Check if emails are disabled first
+    if not EMAIL_CONFIG['enable_emails']:
+        print("📧 Email functionality is DISABLED in configuration")
+        print("   Set EMAIL_CONFIG['enable_emails'] = True to enable")
+        return False
+        
     print("\n📧 Testing Email Configuration...")
     print(f"SMTP Server: {EMAIL_CONFIG['smtp_server']}:{EMAIL_CONFIG['smtp_port']}")
     print(f"Sender Email: {EMAIL_CONFIG['sender_email']}")
     print(f"Enable Emails: {EMAIL_CONFIG['enable_emails']}")
-    
-    if not EMAIL_CONFIG['enable_emails']:
-        print("❌ Email alerts are disabled in configuration!")
-        print("   Set EMAIL_CONFIG['enable_emails'] = True")
-        return False
     
     try:
         # Simple connection test
@@ -152,10 +162,11 @@ def test_email_config():
 
 def send_alert_email(alerts, feedback_id):
     """Send email alert for low ratings"""
+    # COMPLETELY skip if emails are disabled - don't even process alerts
     if not EMAIL_CONFIG['enable_emails']:
-        print(f"⚠️ Email alerts disabled. Would send alert for feedback #{feedback_id}")
-        print(f"   Alerts: {alerts}")
-        return False
+        # Minimal logging - don't process alerts array to save resources
+        print(f"📧 Email alerts disabled. Skipping email for feedback #{feedback_id}")
+        return True  # Return True so form submission doesn't fail
     
     try:
         print(f"\n📧 Attempting to send alert email for feedback #{feedback_id}")
@@ -199,7 +210,7 @@ def send_alert_email(alerts, feedback_id):
         </table>
         
         <p style="margin-top: 20px;">
-            <a href="https://{LOCAL_IP}/admin" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+            <a href="{BASE_URL}/admin" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
                 View Full Details in Admin Panel
             </a>
         </p>
@@ -214,34 +225,43 @@ def send_alert_email(alerts, feedback_id):
         
         print(f"   Connecting to {EMAIL_CONFIG['smtp_server']}:{EMAIL_CONFIG['smtp_port']}")
         
-        # Send email
-        server = smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'])
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        
-        print(f"   Logging in as {EMAIL_CONFIG['sender_email']}")
-        server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
-        
-        print(f"   Sending email to {ALERT_EMAILS}")
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ Alert email sent successfully for feedback #{feedback_id}")
-        return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ SMTP Authentication Error: {str(e)}")
-        print("   Most likely incorrect email or password")
-        print("   For Gmail, make sure:")
-        print("   1. You've enabled 'Less secure app access' OR")
-        print("   2. You're using an App Password (recommended)")
+        # Send email with timeout protection
+        server = None
+        try:
+            server = smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'], timeout=10)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            
+            print(f"   Logging in as {EMAIL_CONFIG['sender_email']}")
+            server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+            
+            print(f"   Sending email to {ALERT_EMAILS}")
+            server.send_message(msg)
+            server.quit()
+            
+            print(f"✅ Alert email sent successfully for feedback #{feedback_id}")
+            return True
+            
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP Authentication Error: {str(e)}")
+            print("   Most likely incorrect email or password")
+            print("   For Gmail, make sure:")
+            print("   1. You've enabled 'Less secure app access' OR")
+            print("   2. You're using an App Password (recommended)")
+            if server:
+                server.quit()
+            return True  # Still return True so form submission doesn't fail
+                
+        except Exception as e:
+            print(f"❌ Failed to send alert email: {str(e)}")
+            if server:
+                server.quit()
+            return True  # Still return True so form submission doesn't fail
+            
     except Exception as e:
-        print(f"❌ Failed to send alert email: {str(e)}")
-        import traceback
-        traceback.print_exc()
-    
-    return False
+        print(f"❌ Error in email preparation: {str(e)}")
+        return True  # Still return True so form submission doesn't fail
 
 def get_recent_alerts(hours=24):
     """Get alerts from recent feedback (last X hours)"""
@@ -722,129 +742,170 @@ def generate_qr():
 def review():
     
     if request.method == "POST":
-        # Get all ratings and comments from form
-        food_quality = int(request.form["food_quality"])
-        food_quality_comments = request.form.get("food_quality_comments", "")
-        
-        seating_arrangement = int(request.form["seating_arrangement"])
-        seating_arrangement_comments = request.form.get("seating_arrangement_comments", "")
-        
-        parking = int(request.form["parking"])
-        parking_comments = request.form.get("parking_comments", "")
-        
-        washroom = int(request.form["washroom"])
-        washroom_comments = request.form.get("washroom_comments", "")
-        
-        hotel_service = int(request.form["hotel_service"])
-        hotel_service_comments = request.form.get("hotel_service_comments", "")
-        
-        general_comments = request.form.get("general_comments", "")
-        
-        # Save to database
-        conn = sqlite3.connect(os.path.join(DB_FOLDER, "reviews.db"))
-        cur = conn.cursor()
-        cur.execute("""INSERT INTO reviews 
-                    (food_quality, food_quality_comments, 
-                     seating_arrangement, seating_arrangement_comments,
-                     parking, parking_comments,
-                     washroom, washroom_comments,
-                     hotel_service, hotel_service_comments,
-                     general_comments) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (food_quality, food_quality_comments,
-                     seating_arrangement, seating_arrangement_comments,
-                     parking, parking_comments,
-                     washroom, washroom_comments,
-                     hotel_service, hotel_service_comments,
-                     general_comments))
-        
-        # Get the ID of the inserted feedback
-        feedback_id = cur.lastrowid
-        conn.commit()
-        conn.close()
-        
-        # Check for alerts
-        feedback_data = {
-            'food_quality': food_quality,
-            'food_quality_comments': food_quality_comments,
-            'seating_arrangement': seating_arrangement,
-            'seating_arrangement_comments': seating_arrangement_comments,
-            'parking': parking,
-            'parking_comments': parking_comments,
-            'washroom': washroom,
-            'washroom_comments': washroom_comments,
-            'hotel_service': hotel_service,
-            'hotel_service_comments': hotel_service_comments
-        }
-        
-        # Calculate overall average for alert checking
-        ratings = [food_quality, seating_arrangement, parking, washroom, hotel_service]
-        overall_avg = sum(ratings) / len(ratings)
-        feedback_data['overall'] = overall_avg
-        
-        alerts = check_alert_thresholds(feedback_data)
-        if alerts:
-            send_alert_email(alerts, feedback_id)
-        
-        return f"""
-        <html>
-        <head>
-            <title>Thank You - {HOTEL_NAME}</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <style>
-                .hotel-logo {{
-                    width: 200px;
-                    height: 160px;
-                    object-fit: cover;
-                    border-radius: 10px;
-                    border: 3px solid #198754;
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-                    margin: 15px auto;
-                    display: block;
-                }}
-                .hotel-header {{
-                    background: linear-gradient(135deg, #198754 0%, #0d6efd 100%);
-                    color: white;
-                    padding: 1.5rem 0;
-                    margin-bottom: 2rem;
-                    border-radius: 15px;
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                }}
-                @media (max-width: 768px) {{
-                    .hotel-logo {{
-                        width: 160px;
-                        height: 130px;
-                    }}
-                }}
-            </style>
-        </head>
-        <body class="container text-center py-5">
-            <div class="hotel-header">
-                <h3>🏨 {HOTEL_NAME}</h3>
-                <p class="lead mb-0">Thank You for Your Feedback</p>
-                <div class="mt-2">
-                    <img src="/static/{HOTEL_LOGO}" alt="{HOTEL_NAME} Logo" class="hotel-logo">
-                </div>
-            </div>
+        try:
+            print(f"📝 Form submission received")
+            print(f"Form data: {dict(request.form)}")
             
-            <div class="card shadow mx-auto" style="max-width: 500px;">
-                <div class="card-body py-5">
-                    <div class="display-1 mb-4">🎉</div>
-                    <h2 class="text-success">Thank You!</h2>
-                    <p class="lead">Your valuable feedback has been submitted successfully.</p>
-                    
-                    <div class="mt-4">
-                        <a href="/review" class="btn btn-primary">Submit Another Review</a>
+            # Get all ratings and comments from form
+            food_quality = int(request.form["food_quality"])
+            food_quality_comments = request.form.get("food_quality_comments", "")
+            
+            seating_arrangement = int(request.form["seating_arrangement"])
+            seating_arrangement_comments = request.form.get("seating_arrangement_comments", "")
+            
+            parking = int(request.form["parking"])
+            parking_comments = request.form.get("parking_comments", "")
+            
+            washroom = int(request.form["washroom"])
+            washroom_comments = request.form.get("washroom_comments", "")
+            
+            hotel_service = int(request.form["hotel_service"])
+            hotel_service_comments = request.form.get("hotel_service_comments", "")
+            
+            general_comments = request.form.get("general_comments", "")
+            
+            print(f"✅ All form data extracted successfully")
+            
+            # Save to database
+            conn = sqlite3.connect(os.path.join(DB_FOLDER, "reviews.db"))
+            cur = conn.cursor()
+            cur.execute("""INSERT INTO reviews 
+                        (food_quality, food_quality_comments, 
+                         seating_arrangement, seating_arrangement_comments,
+                         parking, parking_comments,
+                         washroom, washroom_comments,
+                         hotel_service, hotel_service_comments,
+                         general_comments) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (food_quality, food_quality_comments,
+                         seating_arrangement, seating_arrangement_comments,
+                         parking, parking_comments,
+                         washroom, washroom_comments,
+                         hotel_service, hotel_service_comments,
+                         general_comments))
+            
+            # Get the ID of the inserted feedback
+            feedback_id = cur.lastrowid
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ Feedback #{feedback_id} saved to database")
+            
+            # Check for alerts
+            feedback_data = {
+                'food_quality': food_quality,
+                'food_quality_comments': food_quality_comments,
+                'seating_arrangement': seating_arrangement,
+                'seating_arrangement_comments': seating_arrangement_comments,
+                'parking': parking,
+                'parking_comments': parking_comments,
+                'washroom': washroom,
+                'washroom_comments': washroom_comments,
+                'hotel_service': hotel_service,
+                'hotel_service_comments': hotel_service_comments
+            }
+            
+            # Calculate overall average for alert checking
+            ratings = [food_quality, seating_arrangement, parking, washroom, hotel_service]
+            overall_avg = sum(ratings) / len(ratings)
+            feedback_data['overall'] = overall_avg
+            
+            alerts = check_alert_thresholds(feedback_data)
+            if alerts:
+                print(f"📊 Alerts detected for feedback #{feedback_id}")
+                if EMAIL_CONFIG['enable_emails']:
+                    print(f"📧 Email enabled, attempting to send alert...")
+                    send_alert_email(alerts, feedback_id)
+                else:
+                    print(f"📧 Email disabled, alerts would have been sent for: {[a['category'] for a in alerts]}")
+            else:
+                print(f"✅ No alerts for feedback #{feedback_id}")
+            
+            return f"""
+            <html>
+            <head>
+                <title>Thank You - {HOTEL_NAME}</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+                <style>
+                    .hotel-logo {{
+                        width: 200px;
+                        height: 160px;
+                        object-fit: cover;
+                        border-radius: 10px;
+                        border: 3px solid #198754;
+                        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                        margin: 15px auto;
+                        display: block;
+                    }}
+                    .hotel-header {{
+                        background: linear-gradient(135deg, #198754 0%, #0d6efd 100%);
+                        color: white;
+                        padding: 1.5rem 0;
+                        margin-bottom: 2rem;
+                        border-radius: 15px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                    }}
+                    @media (max-width: 768px) {{
+                        .hotel-logo {{
+                            width: 160px;
+                            height: 130px;
+                        }}
+                    }}
+                </style>
+            </head>
+            <body class="container text-center py-5">
+                <div class="hotel-header">
+                    <h3>🏨 {HOTEL_NAME}</h3>
+                    <p class="lead mb-0">Thank You for Your Feedback</p>
+                    <div class="mt-2">
+                        <img src="/static/{HOTEL_LOGO}" alt="{HOTEL_NAME} Logo" class="hotel-logo">
+                    </div>
+                </div>
+                
+                <div class="card shadow mx-auto" style="max-width: 500px;">
+                    <div class="card-body py-5">
+                        <div class="display-1 mb-4">🎉</div>
+                        <h2 class="text-success">Thank You!</h2>
+                        <p class="lead">Your valuable feedback has been submitted successfully.</p>
+                        <p class="text-muted">Feedback ID: #{feedback_id}</p>
+                        
+                        <div class="mt-4">
+                            <a href="/review" class="btn btn-primary">Submit Another Review</a>
+                            <a href="/" class="btn btn-outline-secondary ms-2">Home</a>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <small>{HOTEL_NAME} &copy; 2024</small>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+        
+        except Exception as e:
+            print(f"❌ Error processing feedback: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return f"""
+            <html>
+            <head>
+                <title>Error - {HOTEL_NAME}</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            </head>
+            <body class="container text-center py-5">
+                <div class="alert alert-danger">
+                    <h3>❌ Error Submitting Feedback</h3>
+                    <p>There was an error processing your feedback. Please try again.</p>
+                    <p><small>Error: {str(e)}</small></p>
+                    <div class="mt-3">
+                        <a href="/review" class="btn btn-primary">Go Back to Form</a>
                         <a href="/" class="btn btn-outline-secondary ms-2">Home</a>
                     </div>
                 </div>
-                <div class="card-footer text-center">
-                    <small>{HOTEL_NAME} &copy; 2024</small>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
+            </body>
+            </html>
+            """
     
     # GET request - show the form
     return f"""
@@ -1219,7 +1280,7 @@ def review():
                                 
                                 <!-- Submit Button -->
                                 <div class="d-grid gap-2">
-                                    <button type="submit" class="btn btn-success btn-lg py-3">
+                                    <button type="submit" class="btn btn-success btn-lg py-3" id="submitBtn">
                                         ✅ Submit Complete Feedback
                                     </button>
                                     <a href="/" class="btn btn-outline-secondary">← Back to Home</a>
@@ -1267,6 +1328,8 @@ def review():
             }}
             
             document.addEventListener('DOMContentLoaded', function() {{
+                console.log('DOM loaded, initializing rating system...');
+                
                 // Rating texts with emojis
                 const ratingTexts = {{
                     1: '😞 Poor (1/5)',
@@ -1303,6 +1366,15 @@ def review():
                     'hotel_service'
                 ];
                 
+                // Track ratings
+                window.ratings = {{
+                    food_quality: null,
+                    seating_arrangement: null,
+                    parking: null,
+                    washroom: null,
+                    hotel_service: null
+                }};
+                
                 // Setup each rating category
                 ratingCategories.forEach(category => {{
                     const stars = document.querySelectorAll(`[data-category="${{category}}"] .star`);
@@ -1310,8 +1382,12 @@ def review():
                     const valueDisplay = document.getElementById(`${{category}}_value`);
                     const barFill = document.getElementById(`${{category}}_bar`);
                     
+                    console.log(`Initializing category: ${{category}}`);
+                    
                     // Function to update stars based on selected value
                     function updateStars(selectedValue) {{
+                        console.log(`Updating ${{category}} to: ${{selectedValue}}`);
+                        
                         stars.forEach(star => {{
                             const starValue = parseInt(star.getAttribute('data-value'));
                             
@@ -1341,6 +1417,9 @@ def review():
                         
                         // Update hidden input
                         hiddenInput.value = selectedValue;
+                        window.ratings[category] = selectedValue;
+                        
+                        console.log(`Updated hidden input ${{category}}: ${{selectedValue}}`);
                     }}
                     
                     // Add click event to each star
@@ -1371,21 +1450,30 @@ def review():
                             }});
                         }});
                     }});
+                    
+                    // Initialize with default value if needed
+                    if (!hiddenInput.value) {{
+                        updateStars(0); // This will set everything to inactive
+                    }}
                 }});
                 
-                // Form validation
+                // Form validation - FIXED VERSION
                 document.getElementById('feedbackForm').addEventListener('submit', function(e) {{
+                    console.log('Form submission attempted');
+                    console.log('Current ratings:', window.ratings);
+                    
                     let allRated = true;
                     const missingCategories = [];
                     
                     ratingCategories.forEach(category => {{
-                        const value = document.getElementById(category).value;
-                        if (!value) {{
+                        const value = window.ratings[category];
+                        console.log(`Checking ${{category}}: ${{value}}`);
+                        if (!value || value === 0) {{
                             allRated = false;
                             // Format category name for display
                             const formattedName = category
                                 .replace('_', ' ')
-                                .replace(/\b\w/g, l => l.toUpperCase());
+                                .replace(/\\b\\w/g, l => l.toUpperCase());
                             missingCategories.push(formattedName);
                         }}
                     }});
@@ -1393,6 +1481,7 @@ def review():
                     if (!allRated) {{
                         e.preventDefault();
                         const missingList = missingCategories.join(', ');
+                        console.log('Missing categories:', missingList);
                         alert(`Please rate all categories before submitting:\\n\\n${{missingList}}`);
                         
                         // Highlight missing categories with animation
@@ -1406,8 +1495,22 @@ def review():
                         }});
                         
                         return false;
+                    }} else {{
+                        console.log('All categories rated, submitting form...');
+                        // Disable submit button to prevent double submission
+                        document.getElementById('submitBtn').disabled = true;
+                        document.getElementById('submitBtn').innerHTML = '⏳ Submitting...';
                     }}
                 }});
+                
+                // Debug: Log when form would normally submit
+                document.getElementById('feedbackForm').addEventListener('submit', function() {{
+                    console.log('Form is submitting...');
+                    ratingCategories.forEach(category => {{
+                        const hiddenInput = document.getElementById(category);
+                        console.log(`Hidden input ${{category}} value: ${{hiddenInput.value}}`);
+                    }});
+                }}, true);
                 
                 // Add CSS animation for highlighting
                 const style = document.createElement('style');
@@ -1417,8 +1520,14 @@ def review():
                         70% {{ box-shadow: 0 0 0 10px rgba(255, 107, 107, 0); }}
                         100% {{ box-shadow: 0 0 0 0 rgba(255, 107, 107, 0); }}
                     }}
+                    #submitBtn:disabled {{
+                        opacity: 0.7;
+                        cursor: not-allowed;
+                    }}
                 `;
                 document.head.appendChild(style);
+                
+                console.log('Rating system initialized successfully');
             }});
         </script>
     </body>
