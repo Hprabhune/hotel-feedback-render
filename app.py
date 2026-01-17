@@ -64,7 +64,25 @@ if not os.path.exists(STATIC_FOLDER):
 # ------------------- GET IP ADDRESS -------------------
 
 
-LOCAL_IP = "hotel-feedback-render.onrender.com"
+# ------------------- URL CONFIGURATION -------------------
+import os
+
+# ALWAYS use Render URL for QR codes to work globally
+RENDER_URL = "hotel-feedback-render.onrender.com"
+BASE_URL = f"https://{RENDER_URL}"  # QR codes ALWAYS point to Render (works globally)
+
+def get_local_ip():
+    """Get local IP for terminal display only"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+LOCAL_IP = get_local_ip()
 # ------------------- HELPER FUNCTIONS -------------------
 def get_rating_emoji(rating):
     """Return emoji for rating value"""
@@ -596,10 +614,10 @@ def home():
                 <p>Scan the QR code to submit your hotel feedback.</p>
                 
                 <div class="alert alert-info">
-                    <strong>📱 Mobile Access:</strong> http://{LOCAL_IP}:5000
+                    <strong>🌍 Global QR Code URL:</strong> {BASE_URL}
+                    <br><strong>💻 Local Testing:</strong> http://{LOCAL_IP}:5000
                     <br><small>Admin Login: admin / harshal@2002</small>
                 </div>
-                
                 <div class="mt-4">
                     <a href="/generate_qr" class="btn btn-success me-2">📱 Generate QR Code</a>
                     <a href="/admin" class="btn btn-secondary me-2">👨‍💼 Admin Dashboard</a>
@@ -617,7 +635,7 @@ def home():
 # ------------------- GENERATE SINGLE QR -------------------
 @app.route("/generate_qr")
 def generate_qr():
-    url = f"https://{LOCAL_IP}/review"
+    url = f"{BASE_URL}/review"  # Use BASE_URL instead of hardcoded URL
     img = qrcode.make(url)
     filepath = os.path.join(QR_FOLDER, "hotel_review_qr.png")
     img.save(filepath)
@@ -2368,7 +2386,8 @@ if __name__ == "__main__":
     print(f"📁 CSV Export: /admin/export/csv (Admin only)")
     print(f"📧 Email Test: /test_email (Admin only)")
     print(f"💻 Local Access: http://127.0.0.1:5000")
-    print(f"📱 Mobile Access: http://{LOCAL_IP}:5000")
+    print(f"🌍 QR Codes Work Globally: {BASE_URL}")
+    print(f"💻 Local Testing: http://{LOCAL_IP}:5000")
     print(f"🔒 Admin Login: admin / harshal@2002")
     print("="*60 + "\n")
     
