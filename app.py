@@ -11,6 +11,11 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Create necessary folders if they don't exist
+for folder in ['qr_codes', 'database']:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
 app = Flask(__name__)
 
 # ------------------- HOTEL CONFIGURATION -------------------
@@ -57,19 +62,9 @@ if not os.path.exists(STATIC_FOLDER):
     os.makedirs(STATIC_FOLDER)
 
 # ------------------- GET IP ADDRESS -------------------
-def get_local_ip():
-    """Get local IP address for mobile access"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
 
-LOCAL_IP = get_local_ip()
 
+LOCAL_IP = "hotel-feedback-render.onrender.com"
 # ------------------- HELPER FUNCTIONS -------------------
 def get_rating_emoji(rating):
     """Return emoji for rating value"""
@@ -186,7 +181,7 @@ def send_alert_email(alerts, feedback_id):
         </table>
         
         <p style="margin-top: 20px;">
-            <a href="http://{LOCAL_IP}:5000/admin" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+            <a href="https://{LOCAL_IP}/admin" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
                 View Full Details in Admin Panel
             </a>
         </p>
@@ -622,7 +617,7 @@ def home():
 # ------------------- GENERATE SINGLE QR -------------------
 @app.route("/generate_qr")
 def generate_qr():
-    url = f"http://{LOCAL_IP}:5000/review"
+    url = f"https://{LOCAL_IP}/review"
     img = qrcode.make(url)
     filepath = os.path.join(QR_FOLDER, "hotel_review_qr.png")
     img.save(filepath)
